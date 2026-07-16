@@ -14,7 +14,9 @@ export const Header = () => {
 
   const handleLogout = () => {
     localStorage.removeItem('isLoggedIn')
+    localStorage.removeItem('accessToken')
     document.cookie = 'isLoggedIn=false; path=/; max-age=0'
+    document.cookie = 'accessToken=; path=/; max-age=0'
     router.push('/login')
   }
 

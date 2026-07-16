@@ -49,22 +49,51 @@ export default function TrackoShell({ children }: { children: React.ReactNode })
   // Bind Keyboard Shortcuts Hook
   useKeyboardShortcuts(() => setIsShortcutsOpen((prev) => !prev))
   
-  const { notifications, members, currentUserId, workspace } = useTrackoStore()
+  const { 
+    notifications, 
+    members, 
+    currentUserId, 
+    workspace,
+    isOffline,
+    offlineQueue,
+    toggleNetworkStatus,
+    undo,
+    redo
+  } = useTrackoStore()
   const { theme, setTheme } = useTheme()
 
   useEffect(() => {
     setMounted(true)
     
-    // Register global hotkey for command palette: ⌘K or Ctrl+K
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault()
         setIsSearchOpen((prev) => !prev)
       }
+      
+      // Global Undo (Ctrl+Z)
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+        const activeEl = document.activeElement
+        if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) {
+          return
+        }
+        e.preventDefault()
+        undo()
+      }
+      
+      // Global Redo (Ctrl+Y or Cmd+Shift+Z)
+      if (((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'y') || ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'z')) {
+        const activeEl = document.activeElement
+        if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) {
+          return
+        }
+        e.preventDefault()
+        redo()
+      }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
+  }, [undo, redo])
 
   if (pathname === '/login') {
     return <>{children}</>
@@ -75,7 +104,9 @@ export default function TrackoShell({ children }: { children: React.ReactNode })
 
   const handleLogout = () => {
     localStorage.removeItem('isLoggedIn')
+    localStorage.removeItem('accessToken')
     document.cookie = 'isLoggedIn=false; path=/; max-age=0'
+    document.cookie = 'accessToken=; path=/; max-age=0'
     router.push('/login')
   }
 
@@ -345,6 +376,46 @@ export default function TrackoShell({ children }: { children: React.ReactNode })
             )}
           </button>
         </div>
+
+        {/* Network & Undo/Redo controls */}
+        {!isCollapsed ? (
+          <div className="px-3 pt-3 flex items-center justify-between gap-1 text-[11px] font-medium border-b pb-3 border-sidebar-border/30">
+            <button
+              onClick={toggleNetworkStatus}
+              className={`flex items-center gap-1.5 px-2 py-1 rounded-md border transition-all duration-150 ${isOffline ? 'bg-orange-500/10 text-orange-500 border-orange-500/20 animate-pulse' : 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20'}`}
+            >
+              <div className={`h-1.5 w-1.5 rounded-full ${isOffline ? 'bg-orange-500' : 'bg-emerald-500'}`} />
+              <span>{isOffline ? `Offline (${offlineQueue.length})` : 'Online'}</span>
+            </button>
+            
+            <div className="flex items-center gap-1">
+              <button 
+                onClick={undo}
+                title="Undo (Ctrl+Z)"
+                className="px-1.5 py-0.5 rounded border border-border bg-muted/40 hover:bg-muted text-muted-foreground transition-colors"
+              >
+                Undo
+              </button>
+              <button 
+                onClick={redo}
+                title="Redo (Ctrl+Y)"
+                className="px-1.5 py-0.5 rounded border border-border bg-muted/40 hover:bg-muted text-muted-foreground transition-colors"
+              >
+                Redo
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="px-3 pt-3 flex justify-center">
+            <button
+              onClick={toggleNetworkStatus}
+              className={`h-6 w-6 rounded-full border flex items-center justify-center transition-all duration-150 ${isOffline ? 'bg-orange-500/10 text-orange-500 border-orange-500/20 animate-pulse' : 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20'}`}
+              title={isOffline ? `Workspace Offline (${offlineQueue.length} queued)` : 'Workspace Online'}
+            >
+              <div className={`h-1.5 w-1.5 rounded-full ${isOffline ? 'bg-orange-500' : 'bg-emerald-500'}`} />
+            </button>
+          </div>
+        )}
 
         {/* Navigation Section */}
         {renderNavLinks()}

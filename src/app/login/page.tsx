@@ -8,9 +8,6 @@ import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
 import { AlertCircle, Chrome, Github, ArrowRight, Sparkles, Shield, Zap } from 'lucide-react'
 
-const VALID_USERNAME = 'admin'
-const VALID_PASSWORD = 'test@123'
-
 type AuthView = 'login' | 'register' | 'forgot'
 
 export default function LoginPage() {
@@ -30,7 +27,7 @@ export default function LoginPage() {
     }
   }, [router])
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!username || !password) {
       setError('Please fill in all fields.')
@@ -40,19 +37,80 @@ export default function LoginPage() {
     setLoading(true)
     setError('')
 
-    setTimeout(() => {
-      if (
-        (username === VALID_USERNAME || username === 'admin@tracko.com') && 
-        password === VALID_PASSWORD
-      ) {
-        localStorage.setItem('isLoggedIn', 'true')
-        document.cookie = `isLoggedIn=true; path=/; max-age=86400`
-        router.push('/dashboard')
-      } else {
-        setError('Invalid username or password. (Hint: admin / test@123)')
-        setLoading(false)
+    try {
+      // 1. Resolve/generate device ID
+      let deviceId = localStorage.getItem('tracko_device_id')
+      if (!deviceId) {
+        deviceId = typeof crypto !== 'undefined' && crypto.randomUUID 
+          ? crypto.randomUUID() 
+          : Math.random().toString(36).substring(2) + Date.now().toString(36)
+        localStorage.setItem('tracko_device_id', deviceId)
       }
-    }, 1200)
+
+      // 2. Resolve device name
+      const getDeviceName = () => {
+        if (typeof window === 'undefined') return 'Unknown Device'
+        const ua = navigator.userAgent
+        let browser = 'Unknown Browser'
+        let os = 'Unknown OS'
+
+        if (ua.includes('Firefox')) browser = 'Firefox'
+        else if (ua.includes('Chrome') && !ua.includes('Chromium')) browser = 'Chrome'
+        else if (ua.includes('Safari') && !ua.includes('Chrome')) browser = 'Safari'
+        else if (ua.includes('Edge')) browser = 'Edge'
+
+        if (ua.includes('Windows')) os = 'Windows'
+        else if (ua.includes('Macintosh') || ua.includes('Mac OS')) os = 'macOS'
+        else if (ua.includes('Linux')) os = 'Linux'
+        else if (ua.includes('Android')) os = 'Android'
+        else if (ua.includes('iPhone') || ua.includes('iPad')) os = 'iOS'
+
+        return `${browser} on ${os}`
+      }
+      const deviceName = getDeviceName()
+
+      // 3. API POST request
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://api.amitrazz.in'
+      const response = await fetch(`${apiUrl}/auth/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: username,
+          password: password,
+          deviceId,
+          deviceName,
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.message || 'Invalid email or password.')
+      }
+
+      // 4. Store credentials and update state
+      if (data.accessToken) {
+        localStorage.setItem('accessToken', data.accessToken)
+        document.cookie = `accessToken=${data.accessToken}; path=/; max-age=86400; SameSite=Strict; Secure`
+      }
+
+      localStorage.setItem('isLoggedIn', 'true')
+      document.cookie = `isLoggedIn=true; path=/; max-age=86400; SameSite=Strict; Secure`
+      
+      setMessage('Successfully authenticated! Redirecting...')
+      
+      setTimeout(() => {
+        router.push('/dashboard')
+      }, 1000)
+
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'An error occurred during login. Please try again.'
+      setError(errorMessage)
+    } finally {
+      setLoading(false)
+    }
   }
 
   const handleRegister = (e: React.FormEvent) => {
@@ -97,13 +155,13 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen grid grid-cols-1 lg:grid-cols-2 bg-background select-none">
-      
+
       {/* Left side panel: Premium visual marketing graphic */}
       <div className="hidden lg:flex flex-col justify-between p-12 bg-linear-to-b from-neutral-900 to-black text-white relative overflow-hidden border-r border-neutral-800">
-        
+
         {/* Glow grid background */}
         <div className="absolute inset-0 opacity-10 bg-[linear-gradient(to_right,#808080_1px,transparent_1px),linear-gradient(to_bottom,#808080_1px,transparent_1px)] bg-[size:24px_24px]" />
-        
+
         <div className="absolute top-[20%] left-[20%] right-[20%] bottom-[20%] bg-indigo-500/10 rounded-full blur-[120px] pointer-events-none" />
 
         {/* Header logo */}
@@ -183,7 +241,7 @@ export default function LoginPage() {
       {/* Right side panel: Minimal Form Cards */}
       <div className="flex flex-col justify-center px-6 py-12 sm:px-16 lg:px-24 xl:px-32 relative bg-card">
         <div className="mx-auto w-full max-w-sm space-y-6">
-          
+
           {/* Header titles */}
           <div className="space-y-2">
             <h1 className="text-2xl font-bold tracking-tight text-foreground">

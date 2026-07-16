@@ -17,7 +17,8 @@ import {
   Bell,
   Trash2,
   Plus,
-  CheckCircle
+  CheckCircle,
+  Terminal
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -33,6 +34,7 @@ type SettingsTab =
   | 'integrations'
   | 'notifications'
   | 'security'
+  | 'developer'
 
 export default function SettingsPage() {
   const router = useRouter()
@@ -46,7 +48,11 @@ export default function SettingsPage() {
     updateWorkspace,
     generateApiKey,
     revokeApiKey,
-    toggleIntegration
+    toggleIntegration,
+    currentUserRole,
+    setUserRole,
+    featureFlags,
+    setFeatureFlag
   } = useTrackoStore()
 
   const [activeTab, setActiveTab] = useState<SettingsTab>('workspace')
@@ -117,7 +123,8 @@ export default function SettingsPage() {
     { id: 'api_keys', label: 'Developer API Keys', icon: Key },
     { id: 'integrations', label: 'Integrations Hub', icon: Layers },
     { id: 'notifications', label: 'Alert Preferences', icon: Bell },
-    { id: 'security', label: 'Account Security', icon: Shield }
+    { id: 'security', label: 'Account Security', icon: Shield },
+    { id: 'developer', label: 'Developer & Flags', icon: Terminal }
   ]
 
   return (
@@ -614,6 +621,94 @@ export default function SettingsPage() {
                 </CardContent>
               </form>
             </Card>
+          )}
+
+          {/* TAB 9: DEVELOPER FLAGS & RBAC ENGINE */}
+          {activeTab === 'developer' && (
+            <div className="space-y-6 animate-fade-in max-w-xl">
+              <Card className="border-border bg-card text-card-foreground">
+                <CardHeader className="border-b px-5 py-4">
+                  <CardTitle className="text-sm font-semibold text-foreground">Role Based Access Control (RBAC) Engine</CardTitle>
+                </CardHeader>
+                <CardContent className="p-5 space-y-4 text-xs">
+                  <div className="space-y-2">
+                    <Label className="text-muted-foreground">Select simulated session role:</Label>
+                    <div className="grid grid-cols-4 gap-2">
+                      {(['viewer', 'member', 'admin', 'owner'] as const).map((role) => (
+                        <button
+                          key={role}
+                          onClick={() => setUserRole(role)}
+                          className={`px-3 py-2 rounded-lg border text-xs font-semibold uppercase tracking-wider transition-all cursor-pointer ${
+                            currentUserRole === role
+                              ? 'bg-primary text-primary-foreground border-primary shadow-sm'
+                              : 'bg-muted/40 text-muted-foreground hover:bg-muted border-border'
+                          }`}
+                        >
+                          {role}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="p-3.5 rounded-lg border bg-muted/20 border-border/60 space-y-2">
+                    <h4 className="font-bold text-[10px] text-muted-foreground uppercase tracking-widest">Active Role Rights</h4>
+                    <ul className="space-y-1.5 list-disc list-inside text-muted-foreground">
+                      <li><strong>Viewer</strong>: Read-only dashboards. Blocked from adding tasks/comments/keys.</li>
+                      <li><strong>Member</strong>: Create and modify tasks. Deleting tasks is blocked.</li>
+                      <li><strong>Admin / Owner</strong>: Fully enabled workspace orchestration permissions.</li>
+                    </ul>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="border-border bg-card text-card-foreground">
+                <CardHeader className="border-b px-5 py-4">
+                  <CardTitle className="text-sm font-semibold text-foreground">Experimental Feature Flags</CardTitle>
+                </CardHeader>
+                <CardContent className="p-5 space-y-4">
+                  <div className="space-y-3.5">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="space-y-1 text-xs">
+                        <Label className="font-semibold text-foreground">Simulate Offline Sync Queue</Label>
+                        <p className="text-muted-foreground text-[10.5px]">Enables offline queue checks, delaying mutations and holding local actions in a flush buffer.</p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={featureFlags.offlineSync}
+                        onChange={(e) => setFeatureFlag('offlineSync', e.target.checked)}
+                        className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary accent-primary cursor-pointer shrink-0 mt-0.5"
+                      />
+                    </div>
+
+                    <div className="flex items-start justify-between gap-4 border-t pt-3">
+                      <div className="space-y-1 text-xs">
+                        <Label className="font-semibold text-foreground">Virtual Collaborations Simulator</Label>
+                        <p className="text-muted-foreground text-[10.5px]">Simulates background workspace updates, comment logging, and status transitions from virtual teammates.</p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={featureFlags.liveSimulation}
+                        onChange={(e) => setFeatureFlag('liveSimulation', e.target.checked)}
+                        className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary accent-primary cursor-pointer shrink-0 mt-0.5"
+                      />
+                    </div>
+
+                    <div className="flex items-start justify-between gap-4 border-t pt-3">
+                      <div className="space-y-1 text-xs">
+                        <Label className="font-semibold text-foreground">Advanced Velocity Metrics Charts</Label>
+                        <p className="text-muted-foreground text-[10.5px]">Renders Recharts analytical reports and rolling completion metrics calculations.</p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={featureFlags.velocityCharts}
+                        onChange={(e) => setFeatureFlag('velocityCharts', e.target.checked)}
+                        className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary accent-primary cursor-pointer shrink-0 mt-0.5"
+                      />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
           )}
 
         </div>

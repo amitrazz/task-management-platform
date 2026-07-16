@@ -2,6 +2,43 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { toast } from 'sonner'
+
+export type UserRole = 'viewer' | 'member' | 'admin' | 'owner'
+
+export type WorkspaceAction = 
+  | 'create_task'
+  | 'update_task'
+  | 'delete_task'
+  | 'manage_settings'
+  | 'manage_billing'
+  | 'manage_keys'
+
+export interface FeatureFlags {
+  offlineSync: boolean
+  liveSimulation: boolean
+  velocityCharts: boolean
+}
+
+export interface Epic {
+  id: string
+  title: string
+  description: string
+  progress: number
+  projectId: string
+}
+
+export interface QueuedAction {
+  type: 'add_task' | 'update_task' | 'delete_task' | 'add_comment'
+  payload: Record<string, unknown>
+}
+
+export interface ActionSnapshot {
+  tasks: Task[]
+  projects: Project[]
+  activities: Activity[]
+  notifications: Notification[]
+}
 
 export interface Member {
   id: string
@@ -83,6 +120,7 @@ export interface Task {
   timeLogged: TimeLogged
   projectId: string
   createdAt: string
+  epicId?: string | null
 }
 
 export interface Activity {
@@ -125,6 +163,15 @@ interface TrackoState {
   workspace: WorkspaceSettings
   currentUserId: string
 
+  // Staff+ State variables
+  isOffline: boolean
+  offlineQueue: QueuedAction[]
+  undoStack: ActionSnapshot[]
+  redoStack: ActionSnapshot[]
+  currentUserRole: UserRole
+  featureFlags: FeatureFlags
+  epics: Epic[]
+
   // Actions
   addTask: (task: Omit<Task, 'id' | 'createdAt' | 'comments' | 'subtasks' | 'dependencies'>) => Task
   updateTask: (id: string, updates: Partial<Task>, customUserId?: string) => void
@@ -146,6 +193,15 @@ interface TrackoState {
   toggleIntegration: (id: string) => void
   resetStore: () => void
   addNotification: (notification: Omit<Notification, 'id' | 'time' | 'isRead'>) => void
+
+  // Staff+ Actions
+  hasPermission: (action: WorkspaceAction) => boolean
+  toggleNetworkStatus: () => void
+  setUserRole: (role: UserRole) => void
+  setFeatureFlag: (flag: keyof FeatureFlags, enabled: boolean) => void
+  undo: () => void
+  redo: () => void
+  pushToUndo: () => void
 }
 
 // Initial Mock Data
@@ -347,9 +403,15 @@ const mockWorkspace: WorkspaceSettings = {
   ]
 }
 
+const mockEpics: Epic[] = [
+  { id: 'EPC-1', title: 'Design System Refactor', description: 'OKLCH theme migration, sleek glass UI layouts, framer-motion micro-animations.', progress: 75, projectId: 'PRJ-1' },
+  { id: 'EPC-2', title: 'Productivity Mechanics', description: 'Command Palette search indexing and raycast keyboard navigation cockpit shortcut listeners.', progress: 100, projectId: 'PRJ-1' },
+  { id: 'EPC-3', title: 'Enterprise Integrations', description: 'Slack notifications trigger logs and billing management layout forms.', progress: 40, projectId: 'PRJ-3' }
+]
+
 export const useTrackoStore = create<TrackoState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
   members: mockMembers,
   teams: mockTeams,
   projects: mockProjects,
@@ -360,7 +422,28 @@ export const useTrackoStore = create<TrackoState>()(
   workspace: mockWorkspace,
   currentUserId: 'MEM-1',
 
+  // Staff+ State initialization
+  isOffline: false,
+  offlineQueue: [],
+  undoStack: [],
+  redoStack: [],
+  currentUserRole: 'admin',
+  featureFlags: { offlineSync: true, liveSimulation: true, velocityCharts: true },
+  epics: mockEpics,
+
   addTask: (taskData) => {
+    if (!get().hasPermission('create_task')) {
+      toast.error('Access Denied: You do not have permission to create tasks.')
+      return {
+        ...taskData,
+        id: 'DENIED',
+        createdAt: new Date().toISOString(),
+        comments: [],
+        subtasks: [],
+        dependencies: []
+      }
+    }
+
     const newId = `TRK-${Math.floor(100 + Math.random() * 900)}`
     const newTask: Task = {
       ...taskData,
@@ -370,6 +453,17 @@ export const useTrackoStore = create<TrackoState>()(
       subtasks: [],
       dependencies: []
     }
+
+    if (get().isOffline) {
+      set((state) => ({
+        tasks: [...state.tasks, newTask],
+        offlineQueue: [...state.offlineQueue, { type: 'add_task', payload: taskData }]
+      }))
+      toast.success('Task created optimistically (offline)')
+      return newTask
+    }
+
+    get().pushToUndo()
 
     set((state) => {
       const updatedTasks = [...state.tasks, newTask]
@@ -391,6 +485,30 @@ export const useTrackoStore = create<TrackoState>()(
   },
 
   updateTask: (id, updates, customUserId) => {
+    if (!get().hasPermission('update_task')) {
+      toast.error('Access Denied: You do not have permission to update tasks.')
+      return
+    }
+
+    if (get().isOffline) {
+      set((state) => {
+        const updatedTasks = state.tasks.map((task) => {
+          if (task.id === id) {
+            return { ...task, ...updates }
+          }
+          return task
+        })
+        return {
+          tasks: updatedTasks,
+          offlineQueue: [...state.offlineQueue, { type: 'update_task', payload: { id, updates, customUserId } }]
+        }
+      })
+      toast.success('Task update queued (offline)')
+      return
+    }
+
+    get().pushToUndo()
+
     set((state) => {
       const oldTask = state.tasks.find(t => t.id === id)
       if (!oldTask) return {}
@@ -402,7 +520,6 @@ export const useTrackoStore = create<TrackoState>()(
         return task
       })
 
-      // Generate activity messages for notable modifications
       const activityMessages: string[] = []
       const activeUserId = customUserId || state.currentUserId
       const commenterName = state.members.find(m => m.id === activeUserId)?.name || 'Someone'
@@ -427,7 +544,6 @@ export const useTrackoStore = create<TrackoState>()(
         taskId: id
       }))
 
-      // Re-calculate project progress if tasks status changed
       let updatedProjects = state.projects
       if (updates.status && updates.status !== oldTask.status) {
         updatedProjects = state.projects.map(proj => {
@@ -450,6 +566,22 @@ export const useTrackoStore = create<TrackoState>()(
   },
 
   deleteTask: (id) => {
+    if (!get().hasPermission('delete_task')) {
+      toast.error('Access Denied: You do not have permission to delete tasks.')
+      return
+    }
+
+    if (get().isOffline) {
+      set((state) => ({
+        tasks: state.tasks.filter((t) => t.id !== id),
+        offlineQueue: [...state.offlineQueue, { type: 'delete_task', payload: { id } }]
+      }))
+      toast.success('Task deletion queued (offline)')
+      return
+    }
+
+    get().pushToUndo()
+
     set((state) => {
       const taskToDelete = state.tasks.find(t => t.id === id)
       if (!taskToDelete) return {}
@@ -723,7 +855,14 @@ export const useTrackoStore = create<TrackoState>()(
       activities: mockActivities,
       notifications: mockNotifications,
       workspace: mockWorkspace,
-      currentUserId: 'MEM-1'
+      currentUserId: 'MEM-1',
+      isOffline: false,
+      offlineQueue: [],
+      undoStack: [],
+      redoStack: [],
+      currentUserRole: 'admin',
+      featureFlags: { offlineSync: true, liveSimulation: true, velocityCharts: true },
+      epics: mockEpics
     })
   },
 
@@ -739,6 +878,110 @@ export const useTrackoStore = create<TrackoState>()(
         ...state.notifications
       ]
     }))
+  },
+
+  hasPermission: (action) => {
+    const role = get().currentUserRole
+    if (role === 'viewer') return false
+    if (role === 'member') {
+      if (action === 'delete_task' || action === 'manage_settings' || action === 'manage_billing' || action === 'manage_keys') {
+        return false
+      }
+    }
+    return true
+  },
+
+  toggleNetworkStatus: () => {
+    const nextOffline = !get().isOffline
+    set({ isOffline: nextOffline })
+    
+    if (!nextOffline && get().offlineQueue.length > 0) {
+      toast.info('Syncing offline actions...')
+      setTimeout(() => {
+        const queue = get().offlineQueue
+        // Re-play queued actions
+        queue.forEach((action) => {
+          if (action.type === 'update_task') {
+            const p = action.payload as unknown as { id: string; updates: Partial<Task>; customUserId?: string }
+            get().updateTask(p.id, p.updates, p.customUserId)
+          } else if (action.type === 'add_task') {
+            const p = action.payload as unknown as Omit<Task, 'id' | 'createdAt' | 'comments' | 'subtasks' | 'dependencies'>
+            get().addTask(p)
+          } else if (action.type === 'delete_task') {
+            const p = action.payload as unknown as { id: string }
+            get().deleteTask(p.id)
+          } else if (action.type === 'add_comment') {
+            const p = action.payload as unknown as { taskId: string; content: string; userId?: string }
+            get().addComment(p.taskId, p.content, p.userId)
+          }
+        })
+        set({ offlineQueue: [] })
+        toast.success(`Sync completed: ${queue.length} updates synchronized!`)
+      }, 1200)
+    } else {
+      toast.success(nextOffline ? 'Workspace is now Offline' : 'Workspace is now Online')
+    }
+  },
+
+  setUserRole: (role) => {
+    set({ currentUserRole: role })
+    toast.success(`Role switched to: ${role}`)
+  },
+
+  setFeatureFlag: (flag, enabled) => {
+    set((state) => ({
+      featureFlags: {
+        ...state.featureFlags,
+        [flag]: enabled
+      }
+    }))
+    toast.success(`Feature Flag "${flag}" toggled ${enabled ? 'ON' : 'OFF'}`)
+  },
+
+  pushToUndo: () => {
+    const { tasks, projects, activities, notifications } = get()
+    set((state) => ({
+      undoStack: [...state.undoStack, { tasks, projects, activities, notifications }].slice(-25),
+      redoStack: []
+    }))
+  },
+
+  undo: () => {
+    const { undoStack, tasks, projects, activities, notifications } = get()
+    if (undoStack.length === 0) {
+      toast.error('Nothing to undo')
+      return
+    }
+    const previous = undoStack[undoStack.length - 1]
+    const rest = undoStack.slice(0, -1)
+    set((state) => ({
+      tasks: previous.tasks,
+      projects: previous.projects,
+      activities: previous.activities,
+      notifications: previous.notifications,
+      undoStack: rest,
+      redoStack: [...state.redoStack, { tasks, projects, activities, notifications }]
+    }))
+    toast.success('Action undone')
+  },
+
+  redo: () => {
+    const { redoStack, tasks, projects, activities, notifications } = get()
+    if (redoStack.length === 0) {
+      toast.error('Nothing to redo')
+      return
+    }
+    const next = redoStack[redoStack.length - 1]
+    const rest = redoStack.slice(0, -1)
+    set((state) => ({
+      tasks: next.tasks,
+      projects: next.projects,
+      activities: next.activities,
+      notifications: next.notifications,
+      redoStack: rest,
+      undoStack: [...state.undoStack, { tasks, projects, activities, notifications }]
+    }))
+    toast.success('Action redone')
   }
 }), {
   name: 'tracko-workspace-storage'

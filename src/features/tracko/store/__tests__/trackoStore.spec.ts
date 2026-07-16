@@ -201,4 +201,51 @@ describe('Tracko Core Store Logic', () => {
     const resetStoreState = useTrackoStore.getState()
     expect(resetStoreState.tasks.some(t => t.title === 'Task to discard')).toBe(false)
   })
+
+  it('should support Undo and Redo operations on task status modification', () => {
+    const store = useTrackoStore.getState()
+    const targetTask = store.tasks[0]
+    const originalStatus = targetTask.status
+    const targetStatus = originalStatus === 'done' ? 'todo' : 'done'
+
+    store.updateTask(targetTask.id, { status: targetStatus })
+    expect(useTrackoStore.getState().tasks.find(t => t.id === targetTask.id)?.status).toBe(targetStatus)
+
+    store.undo()
+    expect(useTrackoStore.getState().tasks.find(t => t.id === targetTask.id)?.status).toBe(originalStatus)
+
+    store.redo()
+    expect(useTrackoStore.getState().tasks.find(t => t.id === targetTask.id)?.status).toBe(targetStatus)
+  })
+
+  it('should queue actions optimistically in offline mode and flush sync on restore', () => {
+    const store = useTrackoStore.getState()
+    useTrackoStore.setState({ isOffline: true })
+    expect(useTrackoStore.getState().isOffline).toBe(true)
+
+    const targetTask = store.tasks[0]
+    store.updateTask(targetTask.id, { priority: 'urgent' })
+
+    const offlineState = useTrackoStore.getState()
+    expect(offlineState.offlineQueue.length).toBe(1)
+    expect(offlineState.offlineQueue[0].type).toBe('update_task')
+
+    store.toggleNetworkStatus()
+    expect(useTrackoStore.getState().isOffline).toBe(false)
+  })
+
+  it('should restrict operations based on Role-Based Access Control (RBAC) engine permissions', () => {
+    const store = useTrackoStore.getState()
+
+    store.setUserRole('viewer')
+    expect(store.hasPermission('delete_task')).toBe(false)
+    expect(store.hasPermission('create_task')).toBe(false)
+
+    store.setUserRole('member')
+    expect(store.hasPermission('create_task')).toBe(true)
+    expect(store.hasPermission('delete_task')).toBe(false)
+
+    store.setUserRole('admin')
+    expect(store.hasPermission('delete_task')).toBe(true)
+  })
 })
